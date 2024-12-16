@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
-import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:babysitterapp/pages/account/account_page.dart';
 
 class Reqpage extends StatefulWidget {
   const Reqpage({super.key});
@@ -11,67 +11,147 @@ class Reqpage extends StatefulWidget {
 }
 
 class _ReqpageState extends State<Reqpage> {
-  File? _profileImage;
-  File? _idFrontImage;
-  File? _idBackImage;
-  bool _isEditing = true;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  late User _user;
 
-  final _emailController = TextEditingController();
-  final _certificationController = TextEditingController();
-  final _idNumberController = TextEditingController();
+  @override
+  void initState() {
+    super.initState();
+    _user = _auth.currentUser!;
+    _sendVerificationEmail();
 
-  String? _selectedGender;
-  DateTime? _selectedBirthdate;
-  String? _selectedIDType;
+    // Delay showing the modal until after the first frame is rendered
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showVerificationModal();
+      _waitForVerification();
+    });
+  }
 
-  Future<void> _pickImage(Function(File?) onImagePicked,
-      {bool fromCamera = false}) async {
-    final pickedImage = await ImagePicker().pickImage(
-      source: fromCamera ? ImageSource.camera : ImageSource.gallery,
-    );
-    if (pickedImage != null) {
-      setState(() {
-        onImagePicked(File(pickedImage.path));
-      });
-      // Automatically populate ID field upon successful picture
-      if (onImagePicked == (file) => _idFrontImage = file) {
-        _idNumberController.text =
-            "Auto-generated ID number"; // Placeholder logic
+  // Send verification email to the user
+  Future<void> _sendVerificationEmail() async {
+    if (!_user.emailVerified) {
+      try {
+        await _user.sendEmailVerification();
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error sending verification email: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
 
-  Future<void> _pickBirthdate() async {
-    final DateTime? pickedDate = await showDatePicker(
-      context: context,
-      initialDate: DateTime(2000),
-      firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
+  // Continuously check for email verification status
+  void _waitForVerification() async {
+    Future.delayed(const Duration(seconds: 3), () async {
+      try {
+        await _user.reload(); // Reload Firebase user data
+        if (_auth.currentUser!.emailVerified) {
+          Navigator.of(context).pop(); // Close the modal dialog
+          _showSuccessPrompt(); // Show success message
+        } else {
+          _waitForVerification(); // Keep checking if not verified
+        }
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error checking verification status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    });
+  }
+
+  // Show success message upon verification
+  void _showSuccessPrompt() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Success! Your email is verified.'),
+        backgroundColor: Colors.green,
+      ),
     );
-    if (pickedDate != null) {
-      setState(() {
-        _selectedBirthdate = pickedDate;
-      });
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const AccountPage()),
+    );
+  }
+
+  // Open Gmail app or fallback to Gmail website
+  void _openGmailApp() async {
+    final Uri gmailAppUri = Uri.parse("googlegmail://");
+    final Uri fallbackUri = Uri.parse("https://mail.google.com/");
+
+    if (await canLaunchUrl(gmailAppUri)) {
+      await launchUrl(gmailAppUri);
+    } else {
+      await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
     }
   }
 
-  void _saveProfile() {
-    setState(() {
-      _isEditing = false;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.check, color: Colors.white),
-            SizedBox(width: 8),
-            Text("Updated successfully"),
-          ],
-        ),
-        backgroundColor: Colors.deepPurple,
-        duration: Duration(seconds: 2),
-      ),
+  // Show modal dialog for email verification
+  void _showVerificationModal() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          contentPadding: const EdgeInsets.all(20),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.mark_email_unread_rounded,
+                color: Colors.deepPurple,
+                size: 50,
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Verification Email Sent!',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 10),
+              const Text(
+                'Please check your Gmail inbox to verify your email address.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              const CircularProgressIndicator(color: Colors.deepPurple),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: _openGmailApp,
+                icon: const Icon(Icons.mail_outline, color: Colors.white),
+                label: const Text(
+                  'Open Gmail',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurple,
+                  minimumSize: const Size(double.infinity, 45),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -79,235 +159,14 @@ class _ReqpageState extends State<Reqpage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Information',
-          style: TextStyle(fontFamily: 'Poppins'),
-        ),
+        title: const Text('Verify Your Email'),
         backgroundColor: Colors.deepPurple,
-        actions: [
-          TextButton(
-            onPressed: _saveProfile,
-            child: const Text(
-              'Confirm',
-              style: TextStyle(
-                color: Colors.white,
-                fontFamily: 'Poppins',
-              ),
-            ),
-          ),
-        ],
+        centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            Stack(
-              children: [
-                CircleAvatar(
-                  radius: 55,
-                  backgroundImage: _profileImage != null
-                      ? FileImage(_profileImage!)
-                      : const AssetImage('assets/images/default_user.png')
-                          as ImageProvider,
-                  backgroundColor: Colors.transparent,
-                ),
-                Positioned(
-                  bottom: 0,
-                  right: 0,
-                  child: GestureDetector(
-                    onTap: () => _pickImage((file) => _profileImage = file),
-                    child: const CircleAvatar(
-                      radius: 18,
-                      backgroundColor: Colors.deepPurple,
-                      child: Icon(Icons.edit, color: Colors.white, size: 18),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 40),
-            _buildProfileField(
-              label: 'Email',
-              controller: _emailController,
-              enabled: _isEditing,
-            ),
-            const SizedBox(height: 20),
-            _buildGenderField(),
-            const SizedBox(height: 20),
-            _buildBirthdateField(),
-            const SizedBox(height: 20),
-            _buildIDTypeField(),
-            const SizedBox(height: 20),
-            _buildIDNumberField(), // ID number field
-            const SizedBox(height: 20),
-            _buildIDUploadSection(),
-            const SizedBox(height: 30),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGenderField() {
-    return DropdownButtonFormField<String>(
-      value: _selectedGender,
-      items: ['Male', 'Female', 'Prefer not to say']
-          .map((gender) => DropdownMenuItem(value: gender, child: Text(gender)))
-          .toList(),
-      onChanged: _isEditing
-          ? (value) => setState(() => _selectedGender = value)
-          : null,
-      decoration: InputDecoration(
-        labelText: 'Gender',
-        labelStyle: const TextStyle(color: Colors.grey),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBirthdateField() {
-    return GestureDetector(
-      onTap: _isEditing ? _pickBirthdate : null,
-      child: AbsorbPointer(
-        child: TextFormField(
-          controller: TextEditingController(
-            text: _selectedBirthdate != null
-                ? DateFormat('MMMM dd, yyyy').format(_selectedBirthdate!)
-                : '',
-          ),
-          decoration: InputDecoration(
-            labelText: 'Birthdate',
-            labelStyle: const TextStyle(color: Colors.grey),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(15),
-            ),
-            suffixIcon: const Icon(Icons.calendar_today, color: Colors.grey),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildIDTypeField() {
-    return DropdownButtonFormField<String>(
-      value: _selectedIDType,
-      items: [
-        'National ID',
-        'Driver\'s License',
-        'Passport',
-        'SSS ID',
-        'PhilHealth ID',
-        'Postal ID',
-        'Voter\'s ID'
-      ]
-          .map((idType) => DropdownMenuItem(value: idType, child: Text(idType)))
-          .toList(),
-      onChanged: _isEditing
-          ? (value) => setState(() => _selectedIDType = value)
-          : null,
-      decoration: InputDecoration(
-        labelText: 'Valid ID',
-        labelStyle: const TextStyle(color: Colors.grey),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildIDNumberField() {
-    return TextFormField(
-      controller: _idNumberController,
-      enabled: _isEditing,
-      decoration: InputDecoration(
-        labelText: 'ID Number',
-        labelStyle: const TextStyle(color: Colors.grey),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(15),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildIDUploadSection() {
-    return Column(
-      children: [
-        const Text('Upload ID',
-            style: TextStyle(fontSize: 16, fontFamily: 'Poppins')),
-        const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _buildIDImageSection(
-              label: 'Front',
-              image: _idFrontImage,
-              onTap: () =>
-                  _pickImage((file) => _idFrontImage = file, fromCamera: true),
-            ),
-            _buildIDImageSection(
-              label: 'Back',
-              image: _idBackImage,
-              onTap: () =>
-                  _pickImage((file) => _idBackImage = file, fromCamera: true),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildIDImageSection({
-    required String label,
-    required File? image,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            height: 100,
-            width: 150,
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey),
-              borderRadius: BorderRadius.circular(10),
-              image: image != null
-                  ? DecorationImage(
-                      image: FileImage(image),
-                      fit: BoxFit.cover,
-                    )
-                  : null,
-            ),
-            child: image == null
-                ? const Center(
-                    child: Icon(Icons.camera_alt, color: Colors.grey))
-                : null,
-          ),
-          const SizedBox(height: 5),
-          Text(label, style: const TextStyle(fontFamily: 'Poppins')),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProfileField({
-    required String label,
-    required TextEditingController controller,
-    bool enabled = false,
-    int maxLines = 1,
-  }) {
-    return TextFormField(
-      controller: controller,
-      enabled: enabled,
-      maxLines: maxLines,
-      style: const TextStyle(color: Colors.black, fontFamily: 'Poppins'),
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: const TextStyle(color: Colors.grey),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(15),
+      body: const Center(
+        child: Text(
+          'Verifying your email...',
+          style: TextStyle(fontSize: 18, color: Colors.black54),
         ),
       ),
     );
